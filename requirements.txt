@@ -3,3 +3,4 @@ pandas
 gspread
 google-auth
 anthropic
+fpdf2
