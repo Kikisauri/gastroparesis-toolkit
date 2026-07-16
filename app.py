@@ -86,6 +86,26 @@ def load_recipes_full():
             'pernil', 'lechon', 'lechón', 'chuleta de cerdo', 'tocino'
         ]
 
+        # High-fiber trigger foods that slow gastric emptying and tend to
+        # cause problems — flagged the same way as pork so the AI knows to
+        # suggest a substitute rather than just silently including them.
+        fiber_flags = [
+            'lettuce', 'spinach', 'cabbage', 'raw vegetable', 'raw broccoli',
+            'raw cauliflower', 'brussels sprout', 'asparagus', 'celery',
+            'dried fruit', 'raisin', 'date', 'prune'
+        ]
+
+        # If an ingredient is already prepared in an easier-to-tolerate way,
+        # I don't flag it — "cooked spinach" or "steamed asparagus" is a lot
+        # gentler than the raw version, so the substitution warning would
+        # be a false alarm. This list covers the common ways a recipe might
+        # already indicate that.
+        easy_tolerate_qualifiers = [
+            'cooked', 'steamed', 'boiled', 'sauteed', 'sautéed', 'roasted',
+            'baked', 'braised', 'canned', 'pureed', 'puréed', 'mashed',
+            'well-cooked', 'soft-cooked', 'simmered'
+        ]
+
         blocks = []
         for r in recipes_list:
             name        = r.get('name', 'Unnamed Recipe')
@@ -127,12 +147,53 @@ def load_recipes_full():
                         pork_found.append(ing.strip())
                         break
 
+            # Same idea, but for the high-fiber trigger foods — I check
+            # each ingredient once and collect any matches so I don't
+            # double-flag an ingredient that happens to match two words
+            # (e.g. "dried dates" would only need to show up once).
+            #
+            # I skip the flag if the ingredient line itself already says
+            # cooked/steamed/etc, OR if a step mentions that SAME flagged
+            # ingredient together with a cooking word in the same step
+            # (e.g. "sauté the spinach for 5 minutes"). I deliberately
+            # don't just check "does any cooking word appear anywhere in
+            # the steps" — a recipe that bakes chicken but tops it with
+            # raw lettuce would wrongly clear the lettuce flag that way.
+            fiber_found = []
+            for ing in ingredients:
+                ing_lower = ing.lower()
+                matched_flag = None
+                for flag in fiber_flags:
+                    if flag in ing_lower:
+                        matched_flag = flag
+                        break
+                if not matched_flag:
+                    continue
+
+                if any(q in ing_lower for q in easy_tolerate_qualifiers):
+                    continue
+
+                cooked_in_steps = any(
+                    matched_flag in step.lower() and
+                    any(q in step.lower() for q in easy_tolerate_qualifiers)
+                    for step in steps
+                )
+                if cooked_in_steps:
+                    continue
+
+                fiber_found.append(ing.strip())
+
             if ingredients:
                 block += f"\n  Ingredients: {', '.join(ingredients)}"
             if pork_found:
                 block += (
                     f"\n  PORK SUBSTITUTION NEEDED: Contains "
                     f"{', '.join(pork_found)} — Kiki can skip this."
+                )
+            if fiber_found:
+                block += (
+                    f"\n  HIGH-FIBER SUBSTITUTION NEEDED: Contains "
+                    f"{', '.join(fiber_found)} — suggest a cooked/lower-fiber swap or skip it."
                 )
             if ibs_notes:  block += f"\n  Gastroparesis Notes: {ibs_notes}"
             if steps:
@@ -320,6 +381,14 @@ DIETARY RULES — NON-NEGOTIABLE:
 - NEVER suggest spicy foods — no hot sauce, jalapenos, chili peppers, nothing picante.
 - PORK: Bacon, longaniza, ham (jamon de cocinar), and salchicha ARE fine for Kiki.
   NEVER suggest pork chops, pork shoulder, lechon, pernil, or tocino.
+- HIGH-FIBER TRIGGER FOODS — NEVER suggest these RAW, and flag them if they show
+  up as a raw ingredient in a recipe so Kiki can swap them out: lettuce, spinach,
+  cabbage, raw vegetables in general, raw broccoli, raw cauliflower, brussels
+  sprouts, asparagus, celery, dried fruits, raisins, dates, prunes. Cooked,
+  steamed, boiled, roasted, or pureed versions of these ARE generally easier to
+  tolerate and fine to suggest — the raw/dried form is the actual trigger. If a
+  recipe calls for the raw version, suggest a cooked/steamed swap instead of
+  just leaving it out unmentioned.
 """
 
 KIKI_PROFILE = """
