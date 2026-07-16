@@ -1265,7 +1265,7 @@ elif page == '📊 My Patterns':
 
 elif page == '📑 Medical Docs':
     st.header('📑 Medical Docs')
-    st.caption("Doctor notes, lab results, weight trends, and visit reports — all in one place.")
+    st.caption("Kiki's doctor notes, lab results, weight trends, and visit reports — all in one place.")
 
     tab_notes, tab_labs, tab_weight, tab_report = st.tabs([
         '📝 Doctor Notes & History',
@@ -1278,11 +1278,7 @@ elif page == '📑 Medical Docs':
     with tab_notes:
         st.subheader('Add an entry')
         st.caption(
-            "Diagnoses, procedures, appointments, or general notes. For an "
-            "actual document (referral letter, discharge summary, imaging "
-            "report), upload it to Google Drive, right-click → Share → "
-            "Copy link, and paste that link below. This app can't store "
-            "files directly, but a Drive link keeps it one tap away."
+            "Diagnoses, procedures, appointments, or general notes."
         )
 
         if 'mh_provider' not in st.session_state:
@@ -1455,7 +1451,7 @@ elif page == '📑 Medical Docs':
     with tab_report:
         st.subheader('Generate a PDF for your appointment')
         st.caption(
-            "Pulls symptoms, medications, flare-ups, weight, lab results, "
+            "Pulls Kiki's symptoms, medications, flare-ups, weight, lab results, "
             "and medical history for a date range into one PDF you can "
             "bring to your visit."
         )
