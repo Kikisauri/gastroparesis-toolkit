@@ -93,7 +93,10 @@ def load_recipes_full():
             cuisine     = r.get('cuisine', '')
             total_time  = r.get('total_time', '')
             serves      = r.get('serves', '')
-            ibs_notes   = r.get('ibs_notes', '')
+            # Reads either key so it works whether your recipes.json still
+            # uses the original 'ibs_notes' field or you've renamed it to
+            # 'gastroparesis_notes' — no need to touch this line either way.
+            ibs_notes   = r.get('gastroparesis_notes', '') or r.get('ibs_notes', '')
             ingredients = r.get('ingredients', [])
             steps       = r.get('steps', [])
             serve_with  = r.get('serve_with', '')
@@ -668,7 +671,7 @@ if page == '🍽 Meals':
 # that last days or weeks and sometimes land me in the hospital.
 # More detailed than the quick meal follow-up.
 # The "period came early" checkbox is the most important field
-# here because it feeds the IBS + Period analysis in My Patterns.
+# here because it feeds the Gastroparesis + Period analysis in My Patterns.
 
 elif page == '🚨 Flare-Ups':
     st.header('🚨 Log a Flare-Up')
@@ -732,7 +735,7 @@ elif page == '🚨 Flare-Ups':
         key='flare_trigger'
     )
 
-    # This checkbox is what feeds the IBS + Period pattern analysis.
+    # This checkbox is what feeds the Gastroparesis + Period pattern analysis.
     # Every time I check this, it builds the dataset that shows me
     # whether my flare-ups predict early periods.
     period_early = st.checkbox(
@@ -1617,7 +1620,7 @@ elif page == '🤖 Kiki\'s Chef':
                             if full_recipes else ""
                         )
 
-                        system = f"""You are Kiki's personal IBS-friendly meal assistant and chef.
+                        system = f"""You are Kiki's personal gastroparesis-friendly meal assistant and chef.
 You are bilingual in English and Spanish. Work from your recipe knowledge base first.
 {recipe_context}
 KIKI'S GASTROPARESIS DATA — Safe foods: {safe_str} | Trigger foods: {trigger_str}
