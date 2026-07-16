@@ -11,13 +11,7 @@ from google.oauth2.service_account import Credentials
 # ============================================================
 # WHAT THIS FILE DOES
 # ============================================================
-# This is my Gastroparesis Tracker app, built with Streamlit.
-# It grew out of my old IBS Tracker — same engine, same Google
-# Sheets backend, but reworked for gastroparesis: texture-aware
-# food logging, post-meal activity (position matters for gastric
-# emptying), recipe-to-symptom linkage, and a doctor-visit export
-# that pulls everything into one report plus a running medical
-# history journal.
+# This is my Gastroparesis Tracker app built with Streamlit.
 # Streamlit reruns this entire file from top to bottom every
 # time I interact with anything — click a button, tap a menu,
 # move a slider. That's how it stays up to date without a loop.
@@ -36,21 +30,10 @@ SCOPES = [
     'https://www.googleapis.com/auth/drive'
 ]
 
-# The name of my Google Sheet file. Every tab (Symptoms, Pending,
-# Medications, Flareups, Activities, Recipes, MedicalHistory)
-# lives inside this one spreadsheet.
-SHEET_FILE_NAME = "IBS Tracker Data"
-
-# Texture options used across the Meals page, Recipes page, and
-# symptom analysis. Defined once here so every dropdown/radio
-# using texture stays in sync if I ever want to add an option.
-TEXTURE_OPTIONS = ['liquid', 'pureed', 'soft', 'solid']
-FAT_FIBER_OPTIONS = ['low', 'medium', 'high']
-
-# Post-meal activity options. What I actually did after eating
-# matters a lot with gastroparesis — staying upright or walking
-# helps gastric emptying, lying down can slow it further.
-ACTIVITY_OPTIONS = ['sat upright', 'walked', 'lay down', 'normal activity']
+# Weight loss of more than this percentage over a 30-day window
+# gets flagged in the Medical Docs page — unintentional weight
+# loss is a real concern with gastroparesis and worth catching early.
+WEIGHT_LOSS_ALERT_PERCENT = 5
 
 
 # ============================================================
@@ -70,22 +53,14 @@ def sanitize_input(text):
 
 
 # ============================================================
-# SECTION 3: RECIPES.JSON LOADER (for the AI Chef)
+# SECTION 3: RECIPES.JSON LOADER
 # ============================================================
-# I still load my local recipe knowledge base before calling the
-# AI. This means the AI gets my hand-picked, gut-safe recipes
+# I load my local recipe knowledge base before calling the AI.
+# This means the AI gets my hand-picked, Gastroparesis-safe recipes
 # instantly without needing to search the web every time.
 # @st.cache_data with no ttl means it loads once per session
 # and stays in memory — recipes.json doesn't change mid-session
 # so I don't need it to refresh the way my Sheets data does.
-#
-# NOTE: this file is just AI context (full instructions, steps,
-# ibs_notes). The texture/fat/fiber TAGS I actually use for
-# tracking and correlation live in the new Recipes tab in Google
-# Sheets instead — see load_recipes_tab() below — because
-# Streamlit Cloud's disk resets on every redeploy, so anything
-# I only save into recipes.json from inside the app would be
-# lost. The Recipes Sheets tab persists like everything else.
 
 @st.cache_data
 def load_recipes_full():
@@ -156,7 +131,7 @@ def load_recipes_full():
                     f"\n  PORK SUBSTITUTION NEEDED: Contains "
                     f"{', '.join(pork_found)} — Kiki can skip this."
                 )
-            if ibs_notes:  block += f"\n  Gut Notes: {ibs_notes}"
+            if ibs_notes:  block += f"\n  Gastroparesis Notes: {ibs_notes}"
             if steps:
                 numbered = [f"{i+1}. {s}" for i, s in enumerate(steps)]
                 block += f"\n  Steps: {' | '.join(numbered)}"
@@ -187,7 +162,7 @@ def get_sheet(tab_name):
         scopes=SCOPES
     )
     client = gspread.authorize(creds)
-    sheet = client.open(SHEET_FILE_NAME).worksheet(tab_name)
+    sheet = client.open("Gastroparesis Tracker Data").worksheet(tab_name)
     return sheet
 
 
@@ -211,54 +186,45 @@ def load_data(tab_name):
         if tab_name == 'Symptoms':
             return pd.DataFrame(columns=[
                 'date', 'food', 'symptoms', 'severity',
-                'meal_time', 'water_glasses', 'recipe_name', 'texture'
+                'meal_time', 'water_glasses'
             ])
         elif tab_name == 'Pending':
             return pd.DataFrame(columns=[
-                'row_id', 'date', 'food', 'meal_time',
-                'water_glasses', 'recipe_name', 'texture'
+                'row_id', 'date', 'food', 'meal_time', 'water_glasses'
             ])
         elif tab_name == 'Flareups':
             return pd.DataFrame(columns=[
                 'date', 'start_time', 'duration_days', 'pain_level',
                 'suspected_trigger', 'period_came_early', 'notes'
             ])
-        elif tab_name == 'Activities':
-            return pd.DataFrame(columns=[
-                'row_id', 'date', 'meal_time',
-                'activity_type', 'minutes_after_meal'
-            ])
-        elif tab_name == 'Recipes':
-            return pd.DataFrame(columns=[
-                'name', 'texture', 'fat_level', 'fiber_level', 'notes'
-            ])
         elif tab_name == 'MedicalHistory':
             return pd.DataFrame(columns=[
                 'date', 'entry_type', 'provider', 'details', 'document_link'
             ])
+        elif tab_name == 'LabResults':
+            return pd.DataFrame(columns=[
+                'date', 'test_name', 'result_value', 'unit',
+                'reference_range', 'notes'
+            ])
+        elif tab_name == 'WeightLog':
+            return pd.DataFrame(columns=['date', 'weight_lbs', 'notes'])
         else:
             return pd.DataFrame(columns=['date', 'medication', 'time'])
     return pd.DataFrame(data)
 
 
-def save_symptom_entry(date, food, symptoms, severity, meal_time,
-                        water_glasses, recipe_name='', texture=''):
+def save_symptom_entry(date, food, symptoms, severity, meal_time, water_glasses):
     """I use this to add a completed symptom row to the Symptoms tab.
     I pass values in the same order as my column headers:
-    date, food, symptoms, severity, meal_time, water_glasses,
-    recipe_name, texture.
+    date, food, symptoms, severity, meal_time, water_glasses.
     str(date) converts the date object to a readable string like
     '2026-03-31' so Google Sheets can store it properly.
     """
     sheet = get_sheet('Symptoms')
-    sheet.append_row([
-        str(date), food, symptoms, severity, meal_time,
-        water_glasses, recipe_name, texture
-    ])
+    sheet.append_row([str(date), food, symptoms, severity, meal_time, water_glasses])
 
 
-def save_pending_meal(row_id, date, food, meal_time, water_glasses,
-                       recipe_name='', texture=''):
+def save_pending_meal(row_id, date, food, meal_time, water_glasses):
     """I use this to save a meal with no symptoms yet to the Pending tab.
     The post-meal banner at the top of every page reads from
     here and clears the row once symptoms are filled in.
@@ -267,10 +233,7 @@ def save_pending_meal(row_id, date, food, meal_time, water_glasses,
     I'd risk deleting the wrong one if I have multiple pending meals.
     """
     sheet = get_sheet('Pending')
-    sheet.append_row([
-        row_id, str(date), food, meal_time, water_glasses,
-        recipe_name, texture
-    ])
+    sheet.append_row([row_id, str(date), food, meal_time, water_glasses])
 
 
 def delete_pending_row(row_id):
@@ -312,41 +275,33 @@ def save_flareup_entry(date, start_time, duration_days, pain_level,
     ])
 
 
-def save_activity_entry(row_id, date, meal_time, activity_type, minutes_after_meal):
-    """I use this to log what I did after eating — sat up, walked,
-    lay down, or just went about normal activity — and how long
-    after the meal I did it. This links to the same row_id as the
-    meal it followed, so I can join them later for correlation.
-    """
-    sheet = get_sheet('Activities')
-    sheet.append_row([row_id, str(date), meal_time, activity_type, minutes_after_meal])
-
-
-def load_recipes_tab():
-    """I use this to load my tagged recipes from the Recipes tab —
-    name, texture, fat level, fiber level, notes. This is what
-    powers the recipe dropdown on the Meals page and the
-    recipe-vs-symptom correlation in My Patterns.
-    """
-    return load_data('Recipes')
-
-
-def save_recipe_tag(name, texture, fat_level, fiber_level, notes):
-    """I use this to add a new tagged recipe to the Recipes tab."""
-    sheet = get_sheet('Recipes')
-    sheet.append_row([name, texture, fat_level, fiber_level, notes])
-
-
 def save_medical_history_entry(date, entry_type, provider, details, document_link):
     """I use this to add an entry to my medical history journal —
     diagnoses, procedures, appointments, or general notes. The
-    document_link is just a pasted Google Drive share link since
-    Streamlit can't store files persistently on its own — Drive
-    already handles that for free and I'm already authenticated
-    into it for Sheets.
+    document_link is a pasted Google Drive share link, since this
+    app can't store files directly — Drive already handles that
+    for free and I'm already authenticated into it for Sheets.
     """
     sheet = get_sheet('MedicalHistory')
     sheet.append_row([str(date), entry_type, provider, details, document_link])
+
+
+def save_lab_result(date, test_name, result_value, unit, reference_range, notes):
+    """I use this to add a lab result row — one row per test per visit,
+    so trends across visits (e.g. a specific marker over time) are
+    just a groupby away later if I want that.
+    """
+    sheet = get_sheet('LabResults')
+    sheet.append_row([str(date), test_name, result_value, unit, reference_range, notes])
+
+
+def save_weight_entry(date, weight_lbs, notes):
+    """I use this to log my weight. Kept as its own tab (not folded
+    into Symptoms) since I want a clean trend line without severity
+    data noise in the way.
+    """
+    sheet = get_sheet('WeightLog')
+    sheet.append_row([str(date), weight_lbs, notes])
 
 
 # ============================================================
@@ -362,16 +317,12 @@ DIETARY RULES — NON-NEGOTIABLE:
 - NEVER suggest spicy foods — no hot sauce, jalapenos, chili peppers, nothing picante.
 - PORK: Bacon, longaniza, ham (jamon de cocinar), and salchicha ARE fine for Kiki.
   NEVER suggest pork chops, pork shoulder, lechon, pernil, or tocino.
-- GASTROPARESIS: prefer lower-fat, lower-fiber, softer-texture meals. High-fat
-  and high-fiber foods slow gastric emptying and are more likely to trigger
-  fullness, nausea, or bloating. When in doubt, suggest a softer or pureed
-  version of a dish rather than the standard solid version.
 """
 
 KIKI_PROFILE = """
 KIKI'S FAVORITES: Lasagna, arroz con habichuelas y pechuga empanada, pizza, spaghetti
-con carne molida, tacos, burritos, quesadillas, steak, mashed potatoes, fries,
-teriyaki chicken, lemon chicken, salmon, fricase de pollo.
+con carne molida, tacos, burritos, quesadillas, steak, mashed potatoes, fries, arroz con bacon y cebolla y pechuga, 
+teriyaki chicken, lemon chicken, salmon, fricase de pollo, pasta con carne molida.
 PROTEINS: Chicken and beef. SIDES: Arroz blanco, potatoes, pasta, habichuelas.
 COOKING: Baked, fried, sauteed, soups and broths.
 CHEESES: Cheddar, pizza blend, mozzarella, monterey jack only.
@@ -442,22 +393,18 @@ st.caption("Documenting the betrayals one meal at a time!")
 # ============================================================
 # SECTION 8: POST-MEAL FOLLOW-UP BANNER
 # ============================================================
-# This is how my app asks me how I feel after eating — and now
-# also what I did after eating (sat up, walked, lay down), since
-# positioning affects gastric emptying with gastroparesis.
+# This is how my app asks me how I feel after eating.
 #
 # The flow works like this:
-#   1. I log a meal on the Meals page (with texture + optional
-#      recipe tag)
+#   1. I log a meal on the Meals page
 #   2. That meal gets saved to the Pending tab in Google Sheets
 #      with a unique row_id timestamp
 #   3. Every single time I open the app — on ANY page —
 #      this section runs first and checks the Pending tab
 #   4. If there's a pending meal, a banner appears at the top
-#      asking how I felt (symptom field + severity slider) AND
-#      what I did after eating (activity + how long after)
-#   5. When I submit, the full entry saves to Symptoms AND
-#      Activities, and the pending row gets deleted
+#      asking how I felt, with a symptom field and pain slider
+#   5. When I submit, the full entry saves to Symptoms and
+#      the pending row gets deleted
 #   6. If I dismiss it, the pending row is just deleted
 #
 # There's no push notification — the banner only shows when
@@ -470,13 +417,11 @@ try:
         now = datetime.datetime.now()
 
         for _, row in pending_df.iterrows():
-            row_id      = str(row['row_id'])
-            food        = row['food']
-            meal_time   = str(row['meal_time'])
-            date        = str(row['date'])
-            water       = row['water_glasses']
-            recipe_name = row.get('recipe_name', '')
-            texture     = row.get('texture', '')
+            row_id    = str(row['row_id'])
+            food      = row['food']
+            meal_time = str(row['meal_time'])
+            date      = str(row['date'])
+            water     = row['water_glasses']
 
             # I calculate how long ago I ate just for the display
             # message. I never auto-delete entries based on time —
@@ -493,7 +438,6 @@ try:
                 else:
                     time_label = f"about {minutes_elapsed // 60} hours"
             except ValueError:
-                minutes_elapsed = 0
                 time_label = "a little while"
 
             with st.container():
@@ -507,22 +451,14 @@ try:
                 # with each other's session_state keys.
                 symptoms_key = f"banner_symptoms_{row_id}"
                 severity_key = f"banner_severity_{row_id}"
-                activity_key = f"banner_activity_{row_id}"
-                minutes_key  = f"banner_minutes_{row_id}"
 
                 if symptoms_key not in st.session_state:
                     st.session_state[symptoms_key] = ''
                 if severity_key not in st.session_state:
                     st.session_state[severity_key] = 5
-                if activity_key not in st.session_state:
-                    st.session_state[activity_key] = ACTIVITY_OPTIONS[0]
-                if minutes_key not in st.session_state:
-                    # Default to a reasonable guess — however long it's
-                    # actually been since the meal, capped at 60.
-                    st.session_state[minutes_key] = min(minutes_elapsed, 60) or 15
 
                 banner_symptoms = st.text_input(
-                    'What is the gut reporting? 📋',
+                    'What is the stomach reporting? 📋',
                     key=symptoms_key
                 )
                 banner_severity = st.slider(
@@ -540,26 +476,6 @@ try:
                 else:
                     st.caption(f'💀 {banner_severity} — Tell no one we ate that.')
 
-                # Post-meal activity — what I actually did after eating.
-                # This matters for gastroparesis because staying upright
-                # or walking helps gastric emptying, lying down can slow
-                # it further and make symptoms worse.
-                st.write('**What did you do after eating? 🚶**')
-                col_act1, col_act2 = st.columns([1.5, 1])
-                with col_act1:
-                    banner_activity = st.selectbox(
-                        'Activity',
-                        ACTIVITY_OPTIONS,
-                        key=activity_key,
-                        label_visibility='collapsed'
-                    )
-                with col_act2:
-                    banner_minutes = st.number_input(
-                        'Roughly how many minutes after eating?',
-                        min_value=0, max_value=300, step=5,
-                        key=minutes_key
-                    )
-
                 col_save, col_dismiss = st.columns([1, 1])
                 with col_save:
                     if st.button('Save the evidence ✅', key=f"save_{row_id}"):
@@ -571,20 +487,13 @@ try:
                                 symptoms=banner_symptoms,
                                 severity=banner_severity,
                                 meal_time=meal_time,
-                                water_glasses=water,
-                                recipe_name=recipe_name,
-                                texture=texture
-                            )
-                            save_activity_entry(
-                                row_id=row_id, date=date, meal_time=meal_time,
-                                activity_type=banner_activity,
-                                minutes_after_meal=banner_minutes
+                                water_glasses=water
                             )
                             delete_pending_row(row_id)
-                            for k in [symptoms_key, severity_key, activity_key, minutes_key]:
+                            for k in [symptoms_key, severity_key]:
                                 if k in st.session_state:
                                     del st.session_state[k]
-                            st.success('Logged! The gut has spoken. 🦕')
+                            st.success('Logged! The stomach has spoken. 🦕')
                             st.rerun()
                 with col_dismiss:
                     if st.button('Dismiss ✖️', key=f"dismiss_{row_id}"):
@@ -600,6 +509,65 @@ except Exception:
 
 
 # ============================================================
+# SECTION 8B: MEDICATION DUE-NOW BANNER
+# ============================================================
+# Honest note on scope: this is NOT a push notification — Streamlit
+# can't notify me while the app is closed. What it CAN do is check,
+# every time I open the app, whether I have a medication scheduled
+# for "now" that I haven't logged yet today, and surface it right
+# alongside the meal banner. That's a real, working reminder as long
+# as I open the app regularly — a true background push would need a
+# companion mobile app or a scheduled SMS/email service (see the
+# project plan, Milestone 8).
+#
+# This reads from a MedicationSchedule tab if one exists. If it
+# doesn't exist yet, this section just skips silently — it's an
+# optional upgrade, not required for the rest of the app to work.
+
+try:
+    schedule_df = load_data('MedicationSchedule')
+    if len(schedule_df) > 0 and 'active' in schedule_df.columns:
+        today_str = str(datetime.date.today())
+        med_log_today = load_data('Medications')
+        med_log_today = med_log_today[med_log_today['date'] == today_str] if 'date' in med_log_today.columns else med_log_today
+
+        now_time = datetime.datetime.now().time()
+        due_now = []
+        for _, srow in schedule_df.iterrows():
+            if str(srow.get('active', 'yes')).strip().lower() not in ('yes', 'true', '1'):
+                continue
+            sched_times = str(srow.get('scheduled_times', '')).split(',')
+            med_name = srow.get('medication_name', '')
+            already_logged = med_name in med_log_today['medication'].values if 'medication' in med_log_today.columns else False
+            if already_logged:
+                continue
+            for t in sched_times:
+                t = t.strip()
+                if not t:
+                    continue
+                try:
+                    sched_dt = datetime.datetime.strptime(t, '%I:%M %p').time()
+                    # Flag as due if we're within 30 minutes after the
+                    # scheduled time and haven't logged it yet today.
+                    minutes_diff = (
+                        datetime.datetime.combine(datetime.date.today(), now_time) -
+                        datetime.datetime.combine(datetime.date.today(), sched_dt)
+                    ).total_seconds() / 60
+                    if 0 <= minutes_diff <= 30:
+                        due_now.append(med_name)
+                        break
+                except ValueError:
+                    continue
+
+        if due_now:
+            st.info(f"💊 Due now: **{', '.join(set(due_now))}** — head to the Meds page to log it.")
+except Exception:
+    # No MedicationSchedule tab yet, or a formatting hiccup — skip
+    # quietly, same pattern as the meal banner above.
+    pass
+
+
+# ============================================================
 # SECTION 9: SIDEBAR NAVIGATION
 # ============================================================
 # st.sidebar puts everything inside my collapsible side panel.
@@ -607,16 +575,15 @@ except Exception:
 # label_visibility='collapsed' hides the 'Go to' label since
 # the emoji icons already make it obvious what the menu is.
 
-st.sidebar.title('🦕 Kiki\'s Diary')
+st.sidebar.title('🦕 Kiki\'s Gastroparesis Diary')
 page = st.sidebar.radio(
     'Go to',
     [
         '🍽 Meals',
         '🚨 Flare-Ups',
         '💊 Meds',
-        '🍳 Recipes',
         '📊 My Patterns',
-        '📋 Doctor Visit',
+        '📑 Medical Docs',
         '🤖 Kiki\'s Chef'
     ],
     label_visibility='collapsed'
@@ -626,13 +593,11 @@ page = st.sidebar.radio(
 # ============================================================
 # SECTION 10: MEALS PAGE
 # ============================================================
-# I log food + time + water + texture here, and optionally tie
-# the meal to a tagged recipe so texture/fat/fiber autofill.
-# Symptoms, severity, and post-meal activity are NOT logged
-# here — they come later via the post-meal banner once my
-# stomach has had time to react (30–60 min). This two-step flow
-# gives more accurate symptom data than logging everything at
-# once right after eating.
+# I log food + time + water here. Symptoms and severity are
+# NOT logged here — they come later via the post-meal banner
+# once my stomach has had time to react (30–60 min).
+# This two-step flow gives more accurate symptom data than
+# logging everything at once right after eating.
 #
 # HOW FIELD CLEARING WORKS:
 # Streamlit reruns the whole file on every interaction, so
@@ -663,37 +628,9 @@ if page == '🍽 Meals':
         st.session_state['entry_time_loaded'] = True
     elif 'entry_meal_time' not in st.session_state:
         st.session_state['entry_meal_time'] = ''
-    if 'entry_texture' not in st.session_state:
-        st.session_state['entry_texture'] = TEXTURE_OPTIONS[2]  # default: soft
 
-    # Recipe picker — pulls from the Recipes Sheets tab. Picking
-    # one autofills the food name and texture so I don't have to
-    # retype it, and it tags the meal for the correlation view in
-    # My Patterns and the recipe-symptom linkage.
-    recipes_df = load_recipes_tab()
-    recipe_names = ['— none / custom meal —'] + recipes_df['name'].tolist() if len(recipes_df) > 0 else ['— none / custom meal —']
-    chosen_recipe = st.selectbox('Cooking from a saved recipe?', recipe_names)
-
-    prefill_food = ''
-    prefill_texture = st.session_state['entry_texture']
-    if chosen_recipe != '— none / custom meal —':
-        recipe_row = recipes_df[recipes_df['name'] == chosen_recipe].iloc[0]
-        prefill_food = chosen_recipe
-        prefill_texture = recipe_row.get('texture', prefill_texture) or prefill_texture
-
-    food = st.text_input(
-        "What did Kiki eat? (don't hold back)",
-        value=prefill_food if chosen_recipe != '— none / custom meal —' else st.session_state['entry_food'],
-        key='entry_food'
-    )
+    food = st.text_input("What did Kiki eat? (don't hold back)", key='entry_food')
     meal_time = st.text_input('What time? (e.g. 2:30 PM)', key='entry_meal_time')
-    texture = st.radio(
-        'Texture 🥣',
-        TEXTURE_OPTIONS,
-        index=TEXTURE_OPTIONS.index(prefill_texture) if prefill_texture in TEXTURE_OPTIONS else 2,
-        horizontal=True,
-        key='entry_texture'
-    )
     water_glasses = st.number_input(
         '💧 Glasses of water today?',
         min_value=0, max_value=20, step=1,
@@ -705,22 +642,18 @@ if page == '🍽 Meals':
             st.warning('Kiki... what did you eat??')
         else:
             # I generate a unique row_id from the current timestamp.
-            # This is what links the pending meal to its banner,
-            # its eventual activity log, and lets me delete exactly
-            # the right row later.
+            # This is what links the pending meal to its banner and
+            # lets me delete exactly the right row later.
             row_id = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
             save_pending_meal(
                 row_id=row_id,
                 date=datetime.date.today(),
                 food=food,
                 meal_time=meal_time,
-                water_glasses=water_glasses,
-                recipe_name=chosen_recipe if chosen_recipe != '— none / custom meal —' else '',
-                texture=texture
+                water_glasses=water_glasses
             )
-            for key in ['entry_food', 'entry_meal_time', 'entry_water', 'entry_texture']:
-                if key in st.session_state:
-                    del st.session_state[key]
+            for key in ['entry_food', 'entry_meal_time', 'entry_water']:
+                del st.session_state[key]
             st.success(
                 'Meal logged! 🦕 Come back in 30–60 minutes and '
                 'I\'ll be asked to report in.'
@@ -904,82 +837,32 @@ elif page == '💊 Meds':
         csv = med_df.to_csv(index=False).encode('utf-8')
         st.download_button('Download CSV', csv, 'medications.csv', 'text/csv')
 
-
-# ============================================================
-# SECTION 13: RECIPES PAGE
-# ============================================================
-# This is where I tag recipes with texture/fat/fiber so they can
-# be picked from a dropdown on the Meals page and so I can see
-# which textures and fat/fiber levels tend to correlate with
-# worse symptoms in My Patterns. This lives in its own Google
-# Sheets tab (not recipes.json) so tags persist across redeploys.
-
-elif page == '🍳 Recipes':
-    st.header('🍳 Recipe Tags')
-    st.caption("Tag your go-to meals so logging them is one tap, not a retype.")
-
-    if 'recipe_name_input' not in st.session_state:
-        st.session_state['recipe_name_input'] = ''
-    if 'recipe_notes_input' not in st.session_state:
-        st.session_state['recipe_notes_input'] = ''
-
-    recipe_name = st.text_input('Recipe or dish name', key='recipe_name_input')
-    col1, col2 = st.columns(2)
-    with col1:
-        recipe_texture = st.radio('Texture 🥣', TEXTURE_OPTIONS, horizontal=True, key='recipe_texture_input')
-        recipe_fat = st.radio('Fat level', FAT_FIBER_OPTIONS, horizontal=True, key='recipe_fat_input')
-    with col2:
-        recipe_fiber = st.radio('Fiber level', FAT_FIBER_OPTIONS, horizontal=True, key='recipe_fiber_input')
-    recipe_notes = st.text_area(
-        'Notes (optional)',
-        key='recipe_notes_input',
-        placeholder='e.g. pureed version sits better than the chunky one'
+    st.write('---')
+    st.caption(
+        "💡 Want a 'due now' reminder banner on every page? Add a "
+        "**MedicationSchedule** tab to your Google Sheet with columns "
+        "`medication_name | scheduled_times | active`, where "
+        "scheduled_times is a comma-separated list like "
+        "`8:00 AM, 1:00 PM, 7:00 PM`. The app checks it automatically — "
+        "no code changes needed once the tab exists."
     )
 
-    if st.button('Save recipe tag 🍳'):
-        if not recipe_name:
-            st.warning('Give the recipe a name first!')
-        else:
-            save_recipe_tag(
-                name=recipe_name,
-                texture=recipe_texture,
-                fat_level=recipe_fat,
-                fiber_level=recipe_fiber,
-                notes=recipe_notes
-            )
-            for key in ['recipe_name_input', 'recipe_notes_input']:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.cache_data.clear()
-            st.success('Recipe tagged! It\'ll show up in the Meals dropdown now. 🍳')
-            st.rerun()
-
-    st.write('---')
-    st.subheader('Your tagged recipes')
-    recipes_df = load_recipes_tab()
-    if len(recipes_df) == 0:
-        st.info('No recipes tagged yet — add your regulars above.')
-    else:
-        st.dataframe(recipes_df, use_container_width=True, hide_index=True)
-
 
 # ============================================================
-# SECTION 14: MY PATTERNS PAGE
+# SECTION 13: MY PATTERNS PAGE
 # ============================================================
-# I put everything in one place and split it across tabs so
+# I put everything in one place and split it across 4 tabs so
 # it doesn't feel like a wall of data on mobile.
 #
 # Tab layout:
-#   📈 Overview        — the big numbers and time charts
-#   🍽 Foods           — safe vs trigger foods side by side
-#   🥣 Texture/Recipe  — severity by texture and by tagged recipe
-#   🚶 Activity        — does post-meal activity affect severity
-#   🚨 Flare-Ups       — counts, averages, common triggers
-#   🩸 IBS+Period      — the pattern I noticed in the hospital
+#   📈 Overview   — the big numbers and time charts
+#   🍽 Foods      — safe vs trigger foods side by side
+#   🚨 Flare-Ups  — counts, averages, common triggers
+#   🩸 Period     — the pattern I noticed in the hospital
 
 elif page == '📊 My Patterns':
     st.header('📊 My Patterns')
-    st.caption("What the data says about Kiki's gut")
+    st.caption("What the data says about Kiki's stomach")
 
     df = load_data('Symptoms')
 
@@ -997,13 +880,11 @@ elif page == '📊 My Patterns':
         if 'water_glasses' in df.columns:
             df['water_glasses'] = pd.to_numeric(df['water_glasses'], errors='coerce')
 
-        tab_overview, tab_foods, tab_texture, tab_activity, tab_flares, tab_period = st.tabs([
+        tab_overview, tab_foods, tab_flares, tab_period = st.tabs([
             '📈 Overview',
             '🍽 Foods',
-            '🥣 Texture/Recipe',
-            '🚶 Activity',
             '🚨 Flare-Ups',
-            '🩸 IBS + Period'
+            '🩸 Period'
         ])
 
         # ── OVERVIEW ─────────────────────────────────────────
@@ -1075,98 +956,6 @@ elif page == '📊 My Patterns':
             st.subheader('All foods ranked by severity')
             st.bar_chart(food_avg.set_index('food')['avg severity'])
 
-        # ── TEXTURE / RECIPE ─────────────────────────────────
-        # This is the gastroparesis-specific view: does texture
-        # (liquid/pureed/soft/solid) or a specific tagged recipe
-        # correlate with worse symptoms?
-        with tab_texture:
-            st.subheader('🥣 Severity by texture')
-            if 'texture' in df.columns and df['texture'].replace('', pd.NA).notna().any():
-                texture_avg = (
-                    df[df['texture'] != '']
-                    .groupby('texture')['severity']
-                    .mean().round(1)
-                    .reindex(TEXTURE_OPTIONS)
-                    .dropna()
-                    .reset_index()
-                )
-                texture_avg.columns = ['texture', 'avg severity']
-                st.bar_chart(texture_avg.set_index('texture')['avg severity'])
-                st.dataframe(texture_avg, use_container_width=True, hide_index=True)
-            else:
-                st.caption('Log meals with a texture selected to see this breakdown.')
-
-            st.subheader('🍳 Severity by tagged recipe')
-            if 'recipe_name' in df.columns and df['recipe_name'].replace('', pd.NA).notna().any():
-                recipe_avg = (
-                    df[df['recipe_name'] != '']
-                    .groupby('recipe_name')['severity']
-                    .mean().round(1)
-                    .sort_values(ascending=False)
-                    .reset_index()
-                )
-                recipe_avg.columns = ['recipe', 'avg severity']
-                st.dataframe(recipe_avg, use_container_width=True, hide_index=True)
-
-                # I merge in the fat/fiber tags from the Recipes tab so I
-                # can see if high-fat or high-fiber recipes are the ones
-                # scoring worst, not just which dish by name.
-                recipes_df = load_recipes_tab()
-                if len(recipes_df) > 0:
-                    merged = recipe_avg.merge(
-                        recipes_df[['name', 'fat_level', 'fiber_level']],
-                        left_on='recipe', right_on='name', how='left'
-                    ).drop(columns=['name'])
-                    st.caption('With fat/fiber tags:')
-                    st.dataframe(merged, use_container_width=True, hide_index=True)
-            else:
-                st.caption('Log meals tied to a saved recipe to see this breakdown.')
-
-        # ── ACTIVITY ─────────────────────────────────────────
-        # Joins Activities to Symptoms by date + meal_time match
-        # to see whether what I did after eating correlates with
-        # how bad symptoms got.
-        with tab_activity:
-            st.subheader('🚶 Severity by post-meal activity')
-            try:
-                activity_df = load_data('Activities')
-                if len(activity_df) == 0:
-                    st.info(
-                        "No activity data yet — this fills in automatically "
-                        "from the post-meal banner once you start answering "
-                        "the 'what did you do after eating' question."
-                    )
-                else:
-                    activity_df['minutes_after_meal'] = pd.to_numeric(
-                        activity_df['minutes_after_meal'], errors='coerce'
-                    )
-                    # I join on date + meal_time since both Symptoms and
-                    # Activities get written from the same banner submit
-                    # and share those two fields.
-                    joined = df.merge(
-                        activity_df[['date', 'meal_time', 'activity_type', 'minutes_after_meal']],
-                        on=['date', 'meal_time'], how='inner'
-                    )
-                    if len(joined) == 0:
-                        st.caption('Not enough matching entries yet to compare.')
-                    else:
-                        activity_avg = (
-                            joined.groupby('activity_type')['severity']
-                            .mean().round(1)
-                            .sort_values(ascending=False)
-                            .reset_index()
-                        )
-                        activity_avg.columns = ['activity after eating', 'avg severity']
-                        st.bar_chart(activity_avg.set_index('activity after eating')['avg severity'])
-                        st.dataframe(activity_avg, use_container_width=True, hide_index=True)
-                        st.caption(
-                            "If 'lay down' has a noticeably higher avg severity than "
-                            "'walked' or 'sat upright', that's worth flagging to your doctor — "
-                            "it lines up with how gastroparesis is affected by positioning."
-                        )
-            except Exception:
-                st.info('Add an Activities tab to Google Sheets to see this data.')
-
         # ── FLARE-UPS ────────────────────────────────────────
         with tab_flares:
             try:
@@ -1225,12 +1014,12 @@ elif page == '📊 My Patterns':
             except Exception:
                 st.info('Add a Flareups tab to Google Sheets to see this data.')
 
-        # ── IBS + PERIOD ─────────────────────────────────────
+        # ── PERIOD ────────────────────────────────────────────
         # I built this tab specifically around the pattern I noticed
         # in the hospital — my flare-ups seem to bring my period early.
         # It gets more accurate the more I log.
         with tab_period:
-            st.subheader('🩸 IBS + Period Connection')
+            st.subheader('🩸 Gastroparesis + Period Connection')
             st.caption(
                 "I noticed my flare-ups often bring my period early. "
                 "Here's what the data actually says."
@@ -1394,34 +1183,34 @@ elif page == '📊 My Patterns':
 
 
 # ============================================================
-# SECTION 15: DOCTOR VISIT PAGE
+# SECTION 14: MEDICAL DOCS PAGE
 # ============================================================
-# This is my medical journal + appointment-ready export in one
-# place. Two parts:
-#   1. A running log of medical history entries — diagnoses,
-#      procedures, appointments, notes — each with an optional
-#      pasted Google Drive link to the actual document (lab
-#      results, imaging, referral letters).
-#   2. A generated report for a date range that pulls together
-#      symptoms, meds, flare-ups, and post-meal activity into
-#      one downloadable Markdown file I can read from or print,
-#      so I'm not scrolling raw logs in the waiting room.
+# This is the page that was referenced in the sidebar but never
+# actually implemented — clicking it before this would show a
+# blank screen. It covers doctor notes/medical history, lab
+# results, weight tracking, and a downloadable PDF report,
+# split across 4 tabs so it doesn't turn into a wall of forms.
 
-elif page == '📋 Doctor Visit':
-    st.header('📋 Doctor Visit Prep')
-    st.caption("Your medical history journal and appointment-ready summary.")
+elif page == '📑 Medical Docs':
+    st.header('📑 Medical Docs')
+    st.caption("Doctor notes, lab results, weight trends, and visit reports — all in one place.")
 
-    tab_journal, tab_report = st.tabs(['📖 Medical History Journal', '📄 Generate Visit Report'])
+    tab_notes, tab_labs, tab_weight, tab_report = st.tabs([
+        '📝 Doctor Notes & History',
+        '🧪 Lab Results',
+        '⚖️ Weight',
+        '📄 PDF Report'
+    ])
 
-    # ── MEDICAL HISTORY JOURNAL ──────────────────────────────
-    with tab_journal:
+    # ── DOCTOR NOTES & MEDICAL HISTORY ───────────────────────
+    with tab_notes:
         st.subheader('Add an entry')
         st.caption(
-            "Diagnoses, procedures, appointments, or general notes. "
-            "For documents (lab results, imaging, referral letters), upload "
-            "the file to Google Drive, right-click it, choose 'Share' → "
-            "'Copy link', and paste that link below — this app can't store "
-            "files directly, but a pasted Drive link keeps everything one tap away."
+            "Diagnoses, procedures, appointments, or general notes. For an "
+            "actual document (referral letter, discharge summary, imaging "
+            "report), upload it to Google Drive, right-click → Share → "
+            "Copy link, and paste that link below. This app can't store "
+            "files directly, but a Drive link keeps it one tap away."
         )
 
         if 'mh_provider' not in st.session_state:
@@ -1434,13 +1223,13 @@ elif page == '📋 Doctor Visit':
         mh_date = st.date_input('Date', value=datetime.date.today(), key='mh_date_input')
         mh_type = st.selectbox(
             'Entry type',
-            ['Diagnosis', 'Procedure', 'Appointment', 'Lab result', 'Note']
+            ['Diagnosis', 'Procedure', 'Appointment', 'Note']
         )
         mh_provider = st.text_input('Provider / doctor (optional)', key='mh_provider')
         mh_details = st.text_area('Details', key='mh_details', height=100)
         mh_link = st.text_input('Google Drive document link (optional)', key='mh_link')
 
-        if st.button('Save to journal 📖'):
+        if st.button('Save to journal 📝'):
             if not mh_details:
                 st.warning('Add some details before saving.')
             else:
@@ -1457,162 +1246,295 @@ elif page == '📋 Doctor Visit':
                 st.rerun()
 
         st.write('---')
-        st.subheader('Your journal')
+        st.subheader('Your history')
         try:
             mh_df = load_data('MedicalHistory')
             if len(mh_df) == 0:
                 st.info('No entries yet — start building your history above.')
             else:
-                mh_df_sorted = mh_df.copy()
-                mh_df_sorted['date'] = pd.to_datetime(mh_df_sorted['date'], errors='coerce')
-                mh_df_sorted = mh_df_sorted.sort_values('date', ascending=False)
-                for _, entry in mh_df_sorted.iterrows():
+                mh_sorted = mh_df.copy()
+                mh_sorted['date'] = pd.to_datetime(mh_sorted['date'], errors='coerce')
+                mh_sorted = mh_sorted.sort_values('date', ascending=False)
+                for _, entry in mh_sorted.iterrows():
                     date_str = entry['date'].strftime('%b %d, %Y') if pd.notna(entry['date']) else 'Unknown date'
                     with st.container():
-                        st.markdown(f"**{date_str} — {entry['entry_type']}**" + (f" ({entry['provider']})" if entry['provider'] else ""))
+                        header = f"**{date_str} — {entry['entry_type']}**"
+                        if entry.get('provider'):
+                            header += f" ({entry['provider']})"
+                        st.markdown(header)
                         st.write(entry['details'])
-                        if entry['document_link']:
+                        if entry.get('document_link'):
                             st.markdown(f"[📎 View document]({entry['document_link']})")
                         st.write('---')
         except Exception:
             st.info('Add a MedicalHistory tab to Google Sheets to start your journal.')
 
-    # ── GENERATE VISIT REPORT ────────────────────────────────
+    # ── LAB RESULTS ───────────────────────────────────────────
+    with tab_labs:
+        st.subheader('Add a lab result')
+
+        if 'lab_test_name' not in st.session_state:
+            st.session_state['lab_test_name'] = ''
+        if 'lab_notes' not in st.session_state:
+            st.session_state['lab_notes'] = ''
+
+        lab_date = st.date_input('Date', value=datetime.date.today(), key='lab_date_input')
+        lab_test_name = st.text_input('Test name (e.g. B12, Iron, CBC panel)', key='lab_test_name')
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            lab_value = st.text_input('Result value', key='lab_value_input')
+        with col2:
+            lab_unit = st.text_input('Unit (e.g. ng/mL)', key='lab_unit_input')
+        with col3:
+            lab_range = st.text_input('Reference range', key='lab_range_input')
+        lab_notes = st.text_area('Notes (optional)', key='lab_notes', height=70)
+
+        if st.button('Save lab result 🧪'):
+            if not lab_test_name:
+                st.warning('Add a test name first.')
+            else:
+                save_lab_result(
+                    date=lab_date, test_name=lab_test_name,
+                    result_value=lab_value, unit=lab_unit,
+                    reference_range=lab_range, notes=lab_notes
+                )
+                for key in ['lab_test_name', 'lab_notes']:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.cache_data.clear()
+                st.success('Lab result saved.')
+                st.rerun()
+
+        st.write('---')
+        st.subheader('All lab results')
+        try:
+            lab_df = load_data('LabResults')
+            if len(lab_df) == 0:
+                st.info('No lab results logged yet.')
+            else:
+                lab_sorted = lab_df.copy()
+                lab_sorted['date'] = pd.to_datetime(lab_sorted['date'], errors='coerce')
+                lab_sorted = lab_sorted.sort_values('date', ascending=False)
+                st.dataframe(lab_sorted, use_container_width=True, hide_index=True)
+                csv = lab_sorted.to_csv(index=False).encode('utf-8')
+                st.download_button('Download lab results CSV', csv, 'lab_results.csv', 'text/csv')
+        except Exception:
+            st.info('Add a LabResults tab to Google Sheets to start logging.')
+
+    # ── WEIGHT ────────────────────────────────────────────────
+    with tab_weight:
+        st.subheader('Log your weight')
+        st.caption(
+            "Unintentional weight loss is worth catching early with "
+            "gastroparesis — this flags it automatically if it looks like "
+            "a trend, not just a one-day dip."
+        )
+
+        weight_date = st.date_input('Date', value=datetime.date.today(), key='weight_date_input')
+        weight_value = st.number_input(
+            'Weight (lbs)', min_value=0.0, max_value=600.0, step=0.1, key='weight_value_input'
+        )
+        weight_notes = st.text_input('Notes (optional)', key='weight_notes_input')
+
+        if st.button('Save weight ⚖️'):
+            save_weight_entry(date=weight_date, weight_lbs=weight_value, notes=weight_notes)
+            st.cache_data.clear()
+            st.success('Weight logged.')
+            st.rerun()
+
+        st.write('---')
+        try:
+            weight_df = load_data('WeightLog')
+            if len(weight_df) == 0:
+                st.info('No weight entries yet.')
+            else:
+                weight_df['date'] = pd.to_datetime(weight_df['date'], errors='coerce')
+                weight_df['weight_lbs'] = pd.to_numeric(weight_df['weight_lbs'], errors='coerce')
+                weight_df = weight_df.dropna(subset=['date', 'weight_lbs']).sort_values('date')
+
+                st.subheader('Weight over time')
+                st.line_chart(weight_df.set_index('date')['weight_lbs'])
+
+                # Flag unintentional weight loss: compare the most recent
+                # weight against the weight from ~30 days earlier.
+                cutoff = weight_df['date'].max() - pd.Timedelta(days=30)
+                older = weight_df[weight_df['date'] <= cutoff]
+                if len(older) > 0:
+                    old_weight = older.iloc[-1]['weight_lbs']
+                    new_weight = weight_df.iloc[-1]['weight_lbs']
+                    pct_change = ((old_weight - new_weight) / old_weight) * 100 if old_weight else 0
+                    if pct_change >= WEIGHT_LOSS_ALERT_PERCENT:
+                        st.warning(
+                            f"⚠️ You're down about {round(pct_change, 1)}% over the last "
+                            f"~30 days ({old_weight} → {new_weight} lbs). Worth mentioning "
+                            f"to your doctor if this wasn't intentional."
+                        )
+                    else:
+                        st.success(f"Weight change over ~30 days: {round(-pct_change, 1)}%")
+
+                st.dataframe(
+                    weight_df.sort_values('date', ascending=False),
+                    use_container_width=True, hide_index=True
+                )
+        except Exception:
+            st.info('Add a WeightLog tab to Google Sheets to start tracking.')
+
+    # ── PDF REPORT ────────────────────────────────────────────
     with tab_report:
-        st.subheader('Generate a report for your appointment')
+        st.subheader('Generate a PDF for your appointment')
+        st.caption(
+            "Pulls symptoms, medications, flare-ups, weight, lab results, "
+            "and medical history for a date range into one PDF you can "
+            "bring to your visit."
+        )
+
         col1, col2 = st.columns(2)
         with col1:
             report_start = st.date_input(
-                'From', value=datetime.date.today() - datetime.timedelta(days=30)
+                'From', value=datetime.date.today() - datetime.timedelta(days=30),
+                key='report_start_input'
             )
         with col2:
-            report_end = st.date_input('To', value=datetime.date.today())
+            report_end = st.date_input('To', value=datetime.date.today(), key='report_end_input')
 
-        if st.button('Generate report 📄'):
-            report_lines = []
-            report_lines.append(f"# Kiki's Gastroparesis / IBS Visit Report")
-            report_lines.append(f"**Date range:** {report_start} to {report_end}")
-            report_lines.append(f"**Generated:** {datetime.date.today()}")
-            report_lines.append("")
+        if st.button('Generate PDF 📄'):
+            try:
+                from fpdf import FPDF
+            except ImportError:
+                st.error(
+                    "The PDF library isn't installed yet. Add `fpdf2` to your "
+                    "requirements.txt (it's free, pure Python, no extra system "
+                    "dependencies) and redeploy — then this button will work."
+                )
+                st.stop()
 
-            # Symptoms summary
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font('Helvetica', 'B', 16)
+            pdf.cell(0, 10, "Kiki's Gastroparesis Visit Report", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font('Helvetica', '', 11)
+            pdf.cell(0, 8, f"Date range: {report_start} to {report_end}", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 8, f"Generated: {datetime.date.today()}", new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(4)
+
+            def add_section(title, lines):
+                pdf.set_font('Helvetica', 'B', 13)
+                pdf.cell(0, 8, title, new_x="LMARGIN", new_y="NEXT")
+                pdf.set_font('Helvetica', '', 10)
+                if not lines:
+                    pdf.multi_cell(0, 6, "No entries in this date range.")
+                else:
+                    for line in lines:
+                        pdf.multi_cell(0, 6, line)
+                pdf.ln(3)
+
+            # Symptoms
             try:
                 sym_df = load_data('Symptoms')
                 sym_df['date'] = pd.to_datetime(sym_df['date'], errors='coerce')
                 sym_df['severity'] = pd.to_numeric(sym_df['severity'], errors='coerce')
                 mask = (sym_df['date'] >= pd.Timestamp(report_start)) & (sym_df['date'] <= pd.Timestamp(report_end))
                 sym_range = sym_df[mask].dropna(subset=['severity'])
-
-                report_lines.append("## Symptom Summary")
-                if len(sym_range) == 0:
-                    report_lines.append("No symptom entries in this date range.")
-                else:
-                    report_lines.append(f"- Total meals logged: {len(sym_range)}")
-                    report_lines.append(f"- Average severity: {round(sym_range['severity'].mean(), 1)}/10")
-                    report_lines.append(f"- Worst severity: {int(sym_range['severity'].max())}/10")
-                    if 'texture' in sym_range.columns and sym_range['texture'].replace('', pd.NA).notna().any():
-                        tex_avg = sym_range[sym_range['texture'] != ''].groupby('texture')['severity'].mean().round(1)
-                        report_lines.append("- Average severity by texture: " + ", ".join(f"{t}: {v}" for t, v in tex_avg.items()))
+                lines = []
+                if len(sym_range) > 0:
+                    lines.append(f"Total meals logged: {len(sym_range)}")
+                    lines.append(f"Average severity: {round(sym_range['severity'].mean(), 1)}/10")
+                    lines.append(f"Worst severity: {int(sym_range['severity'].max())}/10")
                     top_foods = sym_range.groupby('food')['severity'].mean().round(1).sort_values(ascending=False).head(5)
-                    report_lines.append("- Highest-severity foods this period: " + ", ".join(f"{f} ({v})" for f, v in top_foods.items()))
-                report_lines.append("")
+                    lines.append("Highest-severity foods: " + ", ".join(f"{f} ({v})" for f, v in top_foods.items()))
+                add_section('Symptom Summary', lines)
             except Exception:
-                report_lines.append("## Symptom Summary\nCould not load symptom data.\n")
+                add_section('Symptom Summary', ["Could not load symptom data."])
 
-            # Medications summary
+            # Medications
             try:
                 med_df = load_data('Medications')
                 med_df['date'] = pd.to_datetime(med_df['date'], errors='coerce')
                 mask = (med_df['date'] >= pd.Timestamp(report_start)) & (med_df['date'] <= pd.Timestamp(report_end))
                 med_range = med_df[mask]
-
-                report_lines.append("## Medications Taken")
-                if len(med_range) == 0:
-                    report_lines.append("No medication entries in this date range.")
-                else:
+                lines = []
+                if len(med_range) > 0:
                     freq = med_range['medication'].value_counts()
-                    report_lines.append("- " + ", ".join(f"{m}: {c}x" for m, c in freq.items()))
-                report_lines.append("")
+                    lines.append(", ".join(f"{m}: {c}x" for m, c in freq.items()))
+                add_section('Medications Taken', lines)
             except Exception:
-                report_lines.append("## Medications Taken\nCould not load medication data.\n")
+                add_section('Medications Taken', ["Could not load medication data."])
 
-            # Post-meal activity summary
-            try:
-                act_df = load_data('Activities')
-                act_df['date'] = pd.to_datetime(act_df['date'], errors='coerce')
-                mask = (act_df['date'] >= pd.Timestamp(report_start)) & (act_df['date'] <= pd.Timestamp(report_end))
-                act_range = act_df[mask]
-
-                report_lines.append("## Post-Meal Activity")
-                if len(act_range) == 0:
-                    report_lines.append("No activity entries in this date range.")
-                else:
-                    act_freq = act_range['activity_type'].value_counts()
-                    report_lines.append("- " + ", ".join(f"{a}: {c}x" for a, c in act_freq.items()))
-                report_lines.append("")
-            except Exception:
-                report_lines.append("## Post-Meal Activity\nCould not load activity data.\n")
-
-            # Flare-ups summary
+            # Flare-ups
             try:
                 flare_df = load_data('Flareups')
                 flare_df['date'] = pd.to_datetime(flare_df['date'], errors='coerce')
                 mask = (flare_df['date'] >= pd.Timestamp(report_start)) & (flare_df['date'] <= pd.Timestamp(report_end))
                 flare_range = flare_df[mask]
-
-                report_lines.append("## Flare-Ups")
-                if len(flare_range) == 0:
-                    report_lines.append("No flare-ups in this date range.")
-                else:
-                    report_lines.append(f"- Total flare-ups: {len(flare_range)}")
-                    for _, frow in flare_range.iterrows():
-                        report_lines.append(
-                            f"  - {frow['date'].strftime('%b %d')}: pain {frow['pain_level']}/10, "
-                            f"{frow['duration_days']} day(s), trigger: {frow['suspected_trigger'] or 'unknown'}"
-                        )
-                report_lines.append("")
+                lines = []
+                for _, frow in flare_range.iterrows():
+                    lines.append(
+                        f"{frow['date'].strftime('%b %d')}: pain {frow['pain_level']}/10, "
+                        f"{frow['duration_days']} day(s), trigger: {frow['suspected_trigger'] or 'unknown'}"
+                    )
+                add_section('Flare-Ups', lines)
             except Exception:
-                report_lines.append("## Flare-Ups\nCould not load flare-up data.\n")
+                add_section('Flare-Ups', ["Could not load flare-up data."])
 
-            # Medical history journal entries in range
+            # Weight
+            try:
+                weight_df = load_data('WeightLog')
+                weight_df['date'] = pd.to_datetime(weight_df['date'], errors='coerce')
+                weight_df['weight_lbs'] = pd.to_numeric(weight_df['weight_lbs'], errors='coerce')
+                mask = (weight_df['date'] >= pd.Timestamp(report_start)) & (weight_df['date'] <= pd.Timestamp(report_end))
+                weight_range = weight_df[mask].sort_values('date')
+                lines = []
+                if len(weight_range) > 0:
+                    lines.append(f"First: {weight_range.iloc[0]['weight_lbs']} lbs on {weight_range.iloc[0]['date'].strftime('%b %d')}")
+                    lines.append(f"Latest: {weight_range.iloc[-1]['weight_lbs']} lbs on {weight_range.iloc[-1]['date'].strftime('%b %d')}")
+                add_section('Weight Trend', lines)
+            except Exception:
+                add_section('Weight Trend', ["Could not load weight data."])
+
+            # Lab results
+            try:
+                lab_df = load_data('LabResults')
+                lab_df['date'] = pd.to_datetime(lab_df['date'], errors='coerce')
+                mask = (lab_df['date'] >= pd.Timestamp(report_start)) & (lab_df['date'] <= pd.Timestamp(report_end))
+                lab_range = lab_df[mask]
+                lines = []
+                for _, lrow in lab_range.iterrows():
+                    lines.append(
+                        f"{lrow['date'].strftime('%b %d')}: {lrow['test_name']} = "
+                        f"{lrow['result_value']} {lrow['unit']} (ref: {lrow['reference_range']})"
+                    )
+                add_section('Lab Results', lines)
+            except Exception:
+                add_section('Lab Results', ["Could not load lab result data."])
+
+            # Medical history
             try:
                 mh_df = load_data('MedicalHistory')
                 mh_df['date'] = pd.to_datetime(mh_df['date'], errors='coerce')
                 mask = (mh_df['date'] >= pd.Timestamp(report_start)) & (mh_df['date'] <= pd.Timestamp(report_end))
                 mh_range = mh_df[mask].sort_values('date')
-
-                report_lines.append("## Medical History Entries")
-                if len(mh_range) == 0:
-                    report_lines.append("No journal entries in this date range.")
-                else:
-                    for _, mrow in mh_range.iterrows():
-                        line = f"- **{mrow['date'].strftime('%b %d, %Y')} ({mrow['entry_type']})**: {mrow['details']}"
-                        if mrow['provider']:
-                            line += f" — {mrow['provider']}"
-                        if mrow['document_link']:
-                            line += f" [document]({mrow['document_link']})"
-                        report_lines.append(line)
-                report_lines.append("")
+                lines = []
+                for _, mrow in mh_range.iterrows():
+                    line = f"{mrow['date'].strftime('%b %d, %Y')} ({mrow['entry_type']}): {mrow['details']}"
+                    if mrow.get('provider'):
+                        line += f" — {mrow['provider']}"
+                    lines.append(line)
+                add_section('Medical History', lines)
             except Exception:
-                report_lines.append("## Medical History Entries\nCould not load medical history data.\n")
+                add_section('Medical History', ["Could not load medical history data."])
 
-            report_text = "\n".join(report_lines)
-            st.markdown(report_text)
+            pdf_bytes = bytes(pdf.output())
             st.download_button(
-                'Download report as Markdown 📄',
-                report_text.encode('utf-8'),
-                f'doctor_visit_report_{report_start}_{report_end}.md',
-                'text/markdown'
+                'Download PDF report 📄',
+                pdf_bytes,
+                f'gastroparesis_report_{report_start}_{report_end}.pdf',
+                'application/pdf'
             )
-            st.caption(
-                "Tip: open the downloaded .md file in Word or Google Docs and it'll "
-                "format the headers automatically — or just read it straight from "
-                "your phone at the appointment."
-            )
+            st.success('Report generated — download it above.')
 
 
 # ============================================================
-# SECTION 16: AI CHEF PAGE
+# SECTION 15: AI CHEF PAGE
 # ============================================================
 
 elif page == '🤖 Kiki\'s Chef':
@@ -1657,7 +1579,7 @@ elif page == '🤖 Kiki\'s Chef':
         st.write('---')
         st.subheader('Chat with the chef 👨‍🍳')
         st.caption(
-            'Ask for recipes, meal ideas, or what to eat when the gut '
+            'Ask for recipes, meal ideas, or what to eat when the stomach '
             'is being dramatic. English or Spanish, my choice.'
         )
 
@@ -1695,10 +1617,10 @@ elif page == '🤖 Kiki\'s Chef':
                             if full_recipes else ""
                         )
 
-                        system = f"""You are Kiki's personal gastroparesis- and IBS-friendly meal assistant and chef.
+                        system = f"""You are Kiki's personal IBS-friendly meal assistant and chef.
 You are bilingual in English and Spanish. Work from your recipe knowledge base first.
 {recipe_context}
-KIKI'S GUT DATA — Safe foods: {safe_str} | Trigger foods: {trigger_str}
+KIKI'S GASTROPARESIS DATA — Safe foods: {safe_str} | Trigger foods: {trigger_str}
 {KIKI_PROFILE}
 {DIETARY_RULES}
 Be warm, fun, and bilingual. Give full recipe steps when asked.
